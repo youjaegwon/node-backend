@@ -20,6 +20,15 @@ app.use(express.json());
 app.use(morgan("tiny"));
 
 app.get("/api/hello", (_req, res) => res.send("hello"));
+app.get("/api/version", (_req, res) => {
+  res.json({
+    app: process.env.APP_NAME || "node-backend",
+    version: process.env.APP_VERSION || "0.0.0",
+    commit: process.env.GIT_COMMIT || "unknown",
+    builtAt: process.env.BUILD_TIME || "unknown",
+    node: process.version,
+  });
+});
 
 // DB ping
 app.get("/api/db/ping", async (_req, res) => {

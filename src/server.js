@@ -108,3 +108,9 @@ app.get("/healthz", (_req, res) => res.type("text").send("ok\n"));
 app.listen(PORT, () => {
   console.log(`Server running on http://127.0.0.1:${PORT}`);
 });
+
+// --- Auth (refresh/logout) ---
+app.post("/api/auth/refresh", refresh);
+app.post("/api/auth/logout", logout);
+app.post("/api/auth/logout-all", authMiddleware, logoutAll);
+// --- /Auth ---

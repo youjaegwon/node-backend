@@ -18,6 +18,12 @@ const prisma = new PrismaClient();
 app.use(cors());
 app.use(express.json());
 app.use(morgan("tiny"));
+import { register, login, authMiddleware } from "./auth.js";
+app.post("/api/auth/register", register);
+app.post("/api/auth/login", login);
+app.get("/api/me", authMiddleware, (req, res) => {
+  const u = req.user; res.json({ id:u.id, email:u.email, name:u.name, role:u.role });
+});
 
 app.get("/api/hello", (_req, res) => res.send("hello"));
 app.get("/api/version", (_req, res) => {

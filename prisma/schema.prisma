@@ -10,25 +10,48 @@ datasource db {
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
-  name         String?
+  name         String
   passwordHash String
-  role         String   @default("user")
+  role         String?  @default("user")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
+  // 🔽 추가 (양방향 관계 선언)
+  refreshTokens      RefreshToken[]
+  emailVerifications EmailVerification[]
+  passwordResets     PasswordReset[]
 }
 
 model RefreshToken {
   id         Int       @id @default(autoincrement())
-  token      String    @unique
   userId     Int
-  expiresAt  DateTime
+  token      String    @unique
   revokedAt  DateTime?
   replacedBy Int?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([expiresAt])
+}
+
+model EmailVerification {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

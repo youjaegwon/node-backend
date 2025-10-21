@@ -1,0 +1,266 @@
+// ────────────────────────────────────────────────────────────
+// Single-file backend (Express + Prisma + JWT)
+// Security (helmet/rate-limit/CORS), Zod validation,
+// Optional cookie-based tokens, Swagger docs
+// ────────────────────────────────────────────────────────────
+import express from "express";
+import morgan from "morgan";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
+import "dotenv/config";
+import { PrismaClient } from "@prisma/client";
+import crypto from "crypto";
+
+// STEP1: 보안 & 운영 미들웨어
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+
+// STEP2: 입력 검증
+import { z } from "zod";
+
+// STEP7: Swagger
+import swaggerUi from "swagger-ui-express";
+import swaggerJSDoc from "swagger-jsdoc";
+
+const app = express();
+const prisma = new PrismaClient();
+
+// ── 기본 미들웨어
+app.set("trust proxy", 1);
+app.use(helmet());
+app.use(rateLimit({ windowMs: 60_000, max: 100, standardHeaders: true, legacyHeaders: false }));
+app.use(express.json());
+app.use(cookieParser());
+app.use(morgan("tiny"));
+
+// CORS 화이트리스트 (없으면 모두 허용)
+const allowlist = (process.env.FRONT_ORIGINS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // 서버-서버 호출 허용
+      if (allowlist.length === 0) return cb(null, true);
+      return cb(null, allowlist.includes(origin));
+    },
+    credentials: true,
+    allowedHeaders: ["content-type", "authorization"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  })
+);
+
+// ── 환경/설정
+const APP_NAME = process.env.APP_NAME || "node-backend";
+const APP_VERSION = process.env.APP_VERSION || "0.0.0";
+const JWT_SECRET = process.env.JWT_SECRET || "change-me";
+const ACCESS_TTL = process.env.ACCESS_TTL || "15m"; // 15분
+const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TTL_DAYS || 30);
+
+// STEP3: 쿠키 인증 토글
+const USE_COOKIE = String(process.env.USE_COOKIE_AUTH || "false") === "true";
+
+// ── 유틸
+function makeRefreshTokenString() {
+  return crypto.randomUUID();
+}
+function signAccessToken(user) {
+  return jwt.sign(
+    { sub: user.id, email: user.email, role: user.role || "user" },
+    JWT_SECRET,
+    { expiresIn: ACCESS_TTL }
+  );
+}
+function setAuthCookies(res, accessToken, refreshToken) {
+  if (!USE_COOKIE) return;
+  const base = { httpOnly: true, sameSite: "lax", secure: false };
+  res.cookie("at", accessToken, { ...base, path: "/" });
+  res.cookie("rt", refreshToken, { ...base, path: "/api/auth" });
+}
+function getAccessTokenFrom(req) {
+  const h = req.headers.authorization || "";
+  if (h.toLowerCase().startsWith("bearer ")) return h.slice(7).trim();
+  if (USE_COOKIE && req.cookies?.at) return req.cookies.at;
+  return null;
+}
+function authMiddleware(req, res, next) {
+  const token = getAccessTokenFrom(req);
+  if (!token) return res.status(401).json({ error: "unauthorized" });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = { id: payload.sub, email: payload.email, role: payload.role };
+    next();
+  } catch {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+}
+
+// STEP2: Zod DTO & 헬퍼
+const RegisterDto = z.object({
+  email: z.string().email(),
+  name: z.string().min(1),
+  password: z.string().min(8),
+});
+const LoginDto = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+function parseOrBadRequest(schema, payload, res) {
+  const r = schema.safeParse(payload);
+  if (!r.success) {
+    return res.status(400).json({ error: "bad_request", detail: r.error.issues });
+  }
+  return r.data;
+}
+
+// ── 헬스/버전
+app.get("/api/healthz", (_req, res) => res.type("text/plain").send("ok"));
+app.get("/api/version", (_req, res) =>
+  res.json({
+    app: APP_NAME,
+    version: APP_VERSION,
+    commit: process.env.GIT_COMMIT || "unknown",
+    builtAt: process.env.BUILD_TIME || "unknown",
+    node: process.version,
+  })
+);
+
+// ── 인증: 회원가입/로그인/리프레시/로그아웃
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const dto = parseOrBadRequest(RegisterDto, req.body, res); if (dto === undefined) return;
+    const exists = await prisma.user.findUnique({ where: { email: dto.email } });
+    if (exists) return res.status(400).json({ error: "email_exists" });
+
+    const hash = await bcrypt.hash(dto.password, 10);
+    const user = await prisma.user.create({
+      data: { email: dto.email, name: dto.name, passwordHash: hash, role: "user" },
+      select: { id: true, email: true, name: true, role: true },
+    });
+    return res.json({ user });
+  } catch (e) {
+    console.error(e); return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const dto = parseOrBadRequest(LoginDto, req.body, res); if (dto === undefined) return;
+    const user = await prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user) return res.status(401).json({ error: "invalid_credentials" });
+    const ok = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: "invalid_credentials" });
+
+    const rtRow = await prisma.refreshToken.create({
+      data: {
+        token: makeRefreshTokenString(),
+        userId: user.id,
+        expiresAt: new Date(Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000),
+      },
+      select: { id: true, token: true },
+    });
+
+    const accessToken = signAccessToken(user);
+    setAuthCookies(res, accessToken, rtRow.token);
+    return res.json({ accessToken, refreshToken: rtRow.token });
+  } catch (e) {
+    console.error(e); return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/auth/refresh", async (req, res) => {
+  try {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) return res.status(400).json({ error: "bad_request" });
+
+    const old = await prisma.refreshToken.findUnique({
+      where: { token: refreshToken },
+      include: { user: true },
+    });
+    if (!old || old.revokedAt || old.expiresAt < new Date()) {
+      return res.status(400).json({ error: "invalid_refresh_token" });
+    }
+
+    const newRow = await prisma.refreshToken.create({
+      data: {
+        token: makeRefreshTokenString(),
+        userId: old.userId,
+        expiresAt: new Date(Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000),
+      },
+      select: { id: true, token: true },
+    });
+    await prisma.refreshToken.update({
+      where: { token: refreshToken },
+      data: { revokedAt: new Date(), replacedBy: newRow.id }, // Int FK
+    });
+
+    const accessToken = signAccessToken(old.user);
+    setAuthCookies(res, accessToken, newRow.token);
+    return res.json({ accessToken, refreshToken: newRow.token });
+  } catch (e) {
+    console.error(e); return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  try {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) return res.status(400).json({ error: "bad_request" });
+    await prisma.refreshToken.updateMany({
+      where: { token: refreshToken, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (USE_COOKIE) { res.clearCookie("at", { path: "/" }); res.clearCookie("rt", { path: "/api/auth" }); }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e); return res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/auth/logout-all", authMiddleware, async (req, res) => {
+  try {
+    await prisma.refreshToken.updateMany({
+      where: { userId: req.user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (USE_COOKIE) { res.clearCookie("at", { path: "/" }); res.clearCookie("rt", { path: "/api/auth" }); }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e); return res.status(500).json({ error: "server_error" });
+  }
+});
+
+// 보호 API
+app.get("/api/me", authMiddleware, async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { id: true, email: true, name: true, role: true },
+  });
+  return res.json({ user });
+});
+
+// STEP7: Swagger(OpenAPI)
+const swaggerSpec = swaggerJSDoc({
+  definition: {
+    openapi: "3.0.0",
+    info: { title: "My API", version: "1.0.0" },
+    components: {
+      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },
+    },
+    security: [{ bearerAuth: [] }],
+  },
+  apis: ["./src/server.js"],
+});
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// 404
+app.all("/api/*", (_req, res) => res.status(404).json({ error: "not_found" }));
+
+// ── 서버 시작
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, "127.0.0.1", () => {
+  console.log(`Server running on http://127.0.0.1:${PORT}`);
+});

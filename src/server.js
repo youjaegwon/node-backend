@@ -13,7 +13,9 @@ app.use(express.json());
 app.use(morgan("tiny"));
 
 app.get("/healthz", (_req, res) => res.type("text").send("ok"));
+
 app.get("/api/healthz", (_req, res) => res.type("text").send("ok"));
+
 app.get("/api/version", (_req, res) =>
   res.json({
     app: process.env.APP_NAME || "node-backend",
@@ -23,6 +25,16 @@ app.get("/api/version", (_req, res) =>
     node: process.version,
   })
 );
+
+app.get('/db/ping', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ db: 'ok' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ db: 'error', message: e.message });
+  }
+});
 
 app.use("/api/auth", authRouter);
 

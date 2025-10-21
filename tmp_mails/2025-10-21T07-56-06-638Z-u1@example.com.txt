@@ -1,0 +1,9 @@
+TO: u1@example.com
+SUBJECT: [MyApp] 이메일 인증 링크
+
+아래 링크를 클릭해 이메일 인증을 완료하세요 (유효기간 15분)
+http://127.0.0.1/api/auth/verify?token=3f4559c3-cdfc-4e93-b5c7-760ff9e09037
+
+--- HTML ---
+<p>아래 버튼을 클릭해 이메일 인증을 완료하세요 (유효 15분)</p>
+<p><a href="http://127.0.0.1/api/auth/verify?token=3f4559c3-cdfc-4e93-b5c7-760ff9e09037">이메일 인증하기</a></p>

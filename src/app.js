@@ -1,4 +1,6 @@
 import express from 'express';
+import passwordRoutes from './routes/password.js';
+import emailRoutes from './routes/email.js';
 import morgan from 'morgan';
 import cors from 'cors';
 
@@ -16,6 +18,7 @@ app.use(cors());
 // 라우트
 app.use('/api', healthRoutes);
 app.use('/api', versionRoutes);
+app.use('/api/auth', emailRoutes);
 app.use('/api/auth', authRoutes);
 
 // 404

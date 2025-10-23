@@ -1,16 +1,15 @@
-export default function errorHandler(err, req, res, next) {
+export function notFound(req, res, next) {
+  res.status(404).json({ ok: false, code: 'E_NOT_FOUND', message: '요청하신 경로가 존재하지 않습니다.' });
+}
+
+export function errorHandler(err, req, res, next) {
   const status = err.status || 500;
-  const code =
-    err.code ||
-    (status === 401 ? 'E_AUTH_INVALID'
-     : status === 400 ? 'E_VALIDATION'
-     : 'E_UNKNOWN');
+  const code = err.code || 'E_UNKNOWN';
+  const message = err.expose ? err.message : '서버 오류가 발생했습니다.';
 
-  // expose === true 일 때만 메시지를 내려줌(내부 에러 감춤)
-  const message =
-    err.expose === true && typeof err.message === 'string'
-      ? err.message
-      : undefined;
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('[ErrorHandler]', err.stack || err);
+  }
 
-  res.status(status).json({ ok:false, code, message });
+  res.status(status).json({ ok: false, code, message });
 }

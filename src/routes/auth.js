@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import { prisma } from '../lib/prisma.js';
+
 const r = Router();
 
-// 오류 노출 함수
+// 클라이언트에 메시지 노출 가능한 에러 생성 헬퍼
 const expose = (status, code, message) => {
   const e = new Error(message);
   e.status = status;
@@ -15,19 +17,20 @@ const expose = (status, code, message) => {
 r.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password)
-      throw expose(400, 'E_VALIDATION', '이메일과 비밀번호를 입력해주세요.');
+    if (!email || !password) throw expose(400, 'E_VALIDATION', '이메일과 비밀번호를 입력해주세요.');
 
-    const user = await req.models.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
-    });
-
+    const normEmail = String(email).trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email: normEmail }});
     if (!user) throw expose(401, 'E_AUTH_INVALID', '이메일 또는 비밀번호가 올바르지 않습니다.');
 
-    const ok = await bcrypt.compare(password, user.password);
+    // ✅ passwordHash 필드 사용
+    const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw expose(401, 'E_AUTH_INVALID', '이메일 또는 비밀번호가 올바르지 않습니다.');
 
-    res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email } });
+    res.json({
+      ok: true,
+      user: { id: user.id, name: user.name, email: user.email }
+    });
   } catch (e) {
     next(e);
   }
@@ -40,17 +43,21 @@ r.post('/register', async (req, res, next) => {
     if (!name || !email || !password)
       throw expose(400, 'E_VALIDATION', '이름, 이메일, 비밀번호를 모두 입력해주세요.');
 
-    const exists = await req.models.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
-    });
+    const normEmail = String(email).trim().toLowerCase();
+    const exists = await prisma.user.findUnique({ where: { email: normEmail }});
     if (exists) throw expose(400, 'E_VALIDATION', '이미 가입된 이메일입니다.');
 
     const hashed = await bcrypt.hash(password, 10);
-    const newUser = await req.models.user.create({
-      data: { name, email: email.toLowerCase().trim(), password: hashed },
+
+    // ✅ passwordHash 컬럼에 저장
+    const newUser = await prisma.user.create({
+      data: { name, email: normEmail, passwordHash: hashed }
     });
 
-    res.json({ ok: true, user: { id: newUser.id, name: newUser.name, email: newUser.email } });
+    res.status(201).json({
+      ok: true,
+      user: { id: newUser.id, name: newUser.name, email: newUser.email }
+    });
   } catch (e) {
     next(e);
   }

@@ -1,20 +1,20 @@
 import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
 import auth from './routes/auth.js';
-import errorHandler from './middlewares/error.js';
+import { notFound, errorHandler } from './middlewares/error.js';
 
 const app = express();
+app.use(cors());
+app.use(morgan('dev'));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// 헬스체크
-app.get('/api/healthz', (req, res) => res.type('text').send('ok'));
+app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-// API
 app.use('/api/auth', auth);
 
-// 404
-app.use((req, res) => res.status(404).json({ ok:false, code:'E_NOT_FOUND' }));
-
-// 공통 에러 처리
+app.use(notFound);
 app.use(errorHandler);
 
 export default app;

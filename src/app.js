@@ -1,4 +1,5 @@
 import express from 'express';
+import { swaggerServe, swaggerSetup } from './swagger.js';
 import passwordRoutes from './routes/password.js';
 import emailRoutes from './routes/email.js';
 import morgan from 'morgan';
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use(cors());
 
 // 라우트
+app.use('/api-docs', swaggerServe, swaggerSetup);
 app.use('/api', healthRoutes);
 app.use('/api', versionRoutes);
 app.use('/api/auth', emailRoutes);

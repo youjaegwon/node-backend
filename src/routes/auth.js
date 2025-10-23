@@ -1,141 +1,37 @@
 import { Router } from 'express';
-import { prisma } from '../lib/prisma.js';
-import { hash, compare } from '../lib/hash.js';
-import { signAccess } from '../lib/jwt.js';
-import { randomUUID } from 'crypto';
+const r = Router();
 
-const router = Router();
+const expose = (status, code, message) => {
+  const e = new Error(message);
+  e.status = status; e.code = code; e.expose = true;
+  return e;
+};
 
-// 회원가입
-router.post('/register', async (req, res) => {
+r.post('/login', async (req, res, next) => {
   try {
-    const { email, name, password } = req.body ?? {};
-    if (!email || !password) return res.status(400).json({ error: 'bad_request' });
+    const { email, password } = req.body || {};
+    if (!email || !password) throw expose(400, 'E_VALIDATION', '필수 값 누락');
 
-    const exists = await prisma.user.findUnique({ where: { email } });
-    if (exists) return res.status(400).json({ error: 'email_exists' });
+    // TODO: 실제 DB/해시 검증으로 교체
+    const okUser = email === 'test@example.com' && password === 'pass1234';
+    if (!okUser) throw expose(401, 'E_AUTH_INVALID', '아이디 또는 비밀번호가 올바르지 않습니다.');
 
-    const passwordHash = await hash(password);
-    const user = await prisma.user.create({
-      data: { email, name: name ?? null, passwordHash },
-      select: { id: true, email: true, name: true, role: true }
-    });
-
-    res.json({ user });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
-  }
+    res.json({ ok:true, token:'fake.jwt.token',
+      user:{ id:1, name:'테스트', email } });
+  } catch (e) { next(e); }
 });
 
-// 로그인 (AT/RT 발급)
-router.post('/login', async (req, res) => {
+r.post('/register', async (req, res, next) => {
   try {
-    const { email, password } = req.body ?? {};
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(401).json({ error: 'invalid_credentials' });
+    const { name, email, password } = req.body || {};
+    if (!name || !email || !password) throw expose(400, 'E_VALIDATION', '필수 값 누락');
 
-    const ok = await compare(password, user.passwordHash);
-    if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    // TODO: 중복 체크 예시
+    const exists = false; // 중복 시 true
+    if (exists) throw expose(400, 'E_DUPLICATE', '이미 사용 중인 이메일입니다.');
 
-    const accessToken  = signAccess({ id: user.id, email: user.email, role: user.role });
-
-    // RefreshToken: DB row + 문자열 토큰 분리
-    const rawToken = randomUUID().replace(/-/g, '');
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: rawToken,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30d
-      },
-      select: { id: true }
-    });
-
-    res.json({ accessToken, refreshToken: rawToken });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
-  }
+    res.status(201).json({ ok:true });
+  } catch (e) { next(e); }
 });
 
-// 토큰 갱신 (회전)
-router.post('/refresh', async (req, res) => {
-  try {
-    const { refreshToken } = req.body ?? {};
-    if (!refreshToken) return res.status(400).json({ error: 'bad_request' });
-
-    const now = new Date();
-    const found = await prisma.refreshToken.findUnique({ where: { token: refreshToken }});
-    if (!found || found.revokedAt || found.expiresAt <= now) {
-      return res.status(401).json({ error: 'invalid_refresh' });
-    }
-
-    // 새 RT 생성
-    const newRaw = randomUUID().replace(/-/g, '');
-    const newRow = await prisma.refreshToken.create({
-      data: {
-        userId: found.userId,
-        token: newRaw,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
-      },
-      select: { id: true }
-    });
-
-    // 이전 RT 무효화 + replacedBy (Int)
-    await prisma.refreshToken.update({
-      where: { token: refreshToken },
-      data: { revokedAt: now, replacedBy: newRow.id }
-    });
-
-    // AT 재발급
-    const user = await prisma.user.findUnique({ where: { id: found.userId } });
-    const accessToken = signAccess({ id: user.id, email: user.email, role: user.role });
-
-    res.json({ accessToken, refreshToken: newRaw });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
-  }
-});
-
-// 로그아웃(현재 RT 무효화)
-router.post('/logout', async (req, res) => {
-  try {
-    const { refreshToken } = req.body ?? {};
-    if (!refreshToken) return res.status(400).json({ error: 'bad_request' });
-
-    await prisma.refreshToken.updateMany({
-      where: { token: refreshToken, revokedAt: null },
-      data: { revokedAt: new Date() }
-    });
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
-  }
-});
-
-// 전체 로그아웃(모든 기기)
-router.post('/logout-all', async (req, res) => {
-  try {
-    const h = req.get('authorization') || '';
-    const m = h.match(/^Bearer (.+)$/i);
-    if (!m) return res.status(401).json({ error: 'unauthorized' });
-
-    // AT payload만 쓰고, 모든 RT revoke
-    const base64 = m[1].split('.')[1];
-    const payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
-    await prisma.refreshToken.updateMany({
-      where: { userId: payload.id, revokedAt: null },
-      data: { revokedAt: new Date() }
-    });
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
-  }
-});
-
-export default router;
+export default r;

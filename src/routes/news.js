@@ -4,6 +4,20 @@ import { translateToKorean } from '../lib/translate.js';
 
 const r = Router();
 
+/**
+ * @openapi
+ * /news:
+ *   get:
+ *     summary: 코인 뉴스 (최대 N개)
+ *     tags: [News]
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, example: 10 }
+ *     responses:
+ *       200:
+ *         description: 뉴스 목록
+ */
 r.get('/', async (req, res, next) => {
   try {
     const resp = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN');

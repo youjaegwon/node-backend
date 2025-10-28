@@ -1,24 +1,31 @@
-import swaggerJsdoc from 'swagger-jsdoc';
+import swaggerJSDoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
 
 const options = {
   definition: {
     openapi: '3.0.0',
-    info: { title: 'MyApp API Docs', version: '1.0.0', description: '백엔드 API 명세서' },
+    info: {
+      title: 'JCoin API Docs',
+      version: '1.0.0',
+      description: 'JCoin 백엔드 API 명세서',
+    },
+    servers: [{ url: '/api' }],
     components: {
       securitySchemes: {
-        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }
-      }
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
     },
-    // 전역 기본 보안 (개별 경로에서 해제 가능)
     security: [{ bearerAuth: [] }],
   },
-  // 주석만 담긴 paths 파일 및 라우트 폴더 스캔
-  apis: ['./src/swagger.paths.js', './src/routes/*.js'],
+  apis: ['./src/routes/*.js'], // ✅ Swagger JSDoc 읽을 경로
 };
 
-export const swaggerSpec = swaggerJsdoc(options);
+export const swaggerSpec = swaggerJSDoc(options);
 export const swaggerServe = swaggerUi.serve;
 export const swaggerSetup = swaggerUi.setup(swaggerSpec, {
-  swaggerOptions: { persistAuthorization: true }
+  swaggerOptions: { persistAuthorization: true },
 });

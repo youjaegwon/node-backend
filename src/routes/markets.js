@@ -77,6 +77,16 @@ async function getCoinone() {
 }
 
 /* 라우트 */
+/**
+ * @openapi
+ * /markets:
+ *   get:
+ *     summary: 거래소별 BTC 시세 (업비트/빗썸/코인원 + 프리미엄)
+ *     tags: [Markets]
+ *     responses:
+ *       200:
+ *         description: 거래소별 현재가와 프리미엄
+ */
 r.get("/", async (_req, res) => {
   try {
     const base = await getKrwBaseline();
